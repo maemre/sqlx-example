@@ -52,11 +52,10 @@ async fn create_bookmark(
             .execute(&mut *conn)
             .await?;
 
-        let tag_id =
-            sqlx::query_scalar::<_, i64>("SELECT id FROM tag WHERE name = ?")
-                .bind(tag)
-                .fetch_one(&mut *conn)
-                .await?;
+        let tag_id = sqlx::query_scalar::<_, i64>("SELECT id FROM tag WHERE name = ?")
+            .bind(tag)
+            .fetch_one(&mut *conn)
+            .await?;
 
         sqlx::query("INSERT INTO bookmark_tag (bookmark_id, tag_id) VALUES (?, ?)")
             .bind(bookmark_id)
@@ -83,9 +82,8 @@ async fn list_bookmarks(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> 
 
     for (id, url, title) in &rows {
         let tag_rows = sqlx::query_as::<_, (String,)>(
-            "SELECT t.name FROM tag t \
-             JOIN bookmark_tag bt ON t.id = bt.tag_id \
-             WHERE bt.bookmark_id = ? \
+            "SELECT t.name FROM tag t, bookmark_tag bt \
+             WHERE t.id = bt.tag_id AND bt.bookmark_id = ? \
              ORDER BY t.name",
         )
         .bind(id)
@@ -106,15 +104,10 @@ async fn list_bookmarks(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> 
     Ok(())
 }
 
-async fn list_bookmarks_by_tag(
-    conn: &mut SqliteConnection,
-    tag: &str,
-) -> Result<(), sqlx::Error> {
+async fn list_bookmarks_by_tag(conn: &mut SqliteConnection, tag: &str) -> Result<(), sqlx::Error> {
     let rows = sqlx::query_as::<_, (i64, String, String)>(
-        "SELECT b.id, b.url, b.title FROM bookmark b \
-         JOIN bookmark_tag bt ON b.id = bt.bookmark_id \
-         JOIN tag t ON t.id = bt.tag_id \
-         WHERE t.name = ? \
+        "SELECT b.id, b.url, b.title FROM bookmark b, bookmark_tag bt, tag t \
+         WHERE b.id = bt.bookmark_id AND t.id = bt.tag_id AND t.name = ? \
          ORDER BY b.id",
     )
     .bind(tag)
