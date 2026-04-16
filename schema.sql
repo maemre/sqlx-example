@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS bookmark (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tag (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS bookmark_tag (
+    bookmark_id INTEGER NOT NULL REFERENCES bookmark(id),
+    tag_id INTEGER NOT NULL REFERENCES tag(id),
+    PRIMARY KEY (bookmark_id, tag_id)
+);
