@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use clap::{Parser, Subcommand};
 use sqlx::Connection;
 use sqlx::sqlite::SqliteConnection;
@@ -39,29 +41,32 @@ async fn create_bookmark(
     tags: &[String],
 ) -> Result<(), sqlx::Error> {
     let bookmark_id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO bookmark (url, title) VALUES (?, ?) RETURNING id",
+        r"INSERT INTO bookmark (url, title) VALUES (?, ?) RETURNING id",
     )
     .bind(url)
     .bind(title)
     .fetch_one(&mut *conn)
     .await?;
 
-    for tag in tags {
-        sqlx::query("INSERT OR IGNORE INTO tag (name) VALUES (?)")
-            .bind(tag)
-            .execute(&mut *conn)
-            .await?;
+    if !tags.is_empty() {
+        let values = vec!["(?)"; tags.len()].join(", ");
+        let insert_tags = format!(r"INSERT OR IGNORE INTO tag (name) VALUES {values}");
+        let mut q = sqlx::query(&insert_tags);
+        for tag in tags {
+            q = q.bind(tag);
+        }
+        q.execute(&mut *conn).await?;
 
-        let tag_id = sqlx::query_scalar::<_, i64>("SELECT id FROM tag WHERE name = ?")
-            .bind(tag)
-            .fetch_one(&mut *conn)
-            .await?;
-
-        sqlx::query("INSERT INTO bookmark_tag (bookmark_id, tag_id) VALUES (?, ?)")
-            .bind(bookmark_id)
-            .bind(tag_id)
-            .execute(&mut *conn)
-            .await?;
+        let placeholders = vec!["?"; tags.len()].join(", ");
+        let link_tags = format!(
+            r"INSERT INTO bookmark_tag (bookmark_id, tag_id)
+              SELECT ?, id FROM tag WHERE name IN ({placeholders})"
+        );
+        let mut q = sqlx::query(&link_tags).bind(bookmark_id);
+        for tag in tags {
+            q = q.bind(tag);
+        }
+        q.execute(&mut *conn).await?;
     }
 
     println!("Added bookmark: {title} ({url})");
@@ -69,28 +74,44 @@ async fn create_bookmark(
 }
 
 async fn list_bookmarks(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> {
-    let rows = sqlx::query_as::<_, (i64, String, String)>(
-        "SELECT id, url, title FROM bookmark ORDER BY id",
+    let bookmarks = sqlx::query_as::<_, (i64, String, String)>(
+        r"SELECT id, url, title FROM bookmark ORDER BY id",
     )
     .fetch_all(&mut *conn)
     .await?;
 
-    if rows.is_empty() {
+    if bookmarks.is_empty() {
         println!("No bookmarks found.");
         return Ok(());
     }
 
-    for (id, url, title) in &rows {
-        let tag_rows = sqlx::query_as::<_, (String,)>(
-            "SELECT t.name FROM tag t, bookmark_tag bt \
-             WHERE t.id = bt.tag_id AND bt.bookmark_id = ? \
-             ORDER BY t.name",
-        )
-        .bind(id)
-        .fetch_all(&mut *conn)
-        .await?;
+    let links = sqlx::query_as::<_, (i64, i64)>(
+        r"SELECT bookmark_id, tag_id FROM bookmark_tag",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
 
-        let tags: Vec<&str> = tag_rows.iter().map(|(name,)| name.as_str()).collect();
+    let tag_names: HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>(
+        r"SELECT id, name FROM tag WHERE id IN (SELECT tag_id FROM bookmark_tag)",
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .collect();
+
+    let mut tags_by_bookmark: HashMap<i64, Vec<&str>> = HashMap::new();
+    for (bookmark_id, tag_id) in &links {
+        if let Some(name) = tag_names.get(tag_id) {
+            tags_by_bookmark
+                .entry(*bookmark_id)
+                .or_default()
+                .push(name.as_str());
+        }
+    }
+
+    for (id, url, title) in &bookmarks {
+        let mut tags = tags_by_bookmark.remove(id).unwrap_or_default();
+        tags.sort();
         let tags_display = if tags.is_empty() {
             String::from("(none)")
         } else {
@@ -106,9 +127,9 @@ async fn list_bookmarks(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> 
 
 async fn list_bookmarks_by_tag(conn: &mut SqliteConnection, tag: &str) -> Result<(), sqlx::Error> {
     let rows = sqlx::query_as::<_, (i64, String, String)>(
-        "SELECT b.id, b.url, b.title FROM bookmark b, bookmark_tag bt, tag t \
-         WHERE b.id = bt.bookmark_id AND t.id = bt.tag_id AND t.name = ? \
-         ORDER BY b.id",
+        r"SELECT b.id, b.url, b.title FROM bookmark b, bookmark_tag bt, tag t
+          WHERE b.id = bt.bookmark_id AND t.id = bt.tag_id AND t.name = ?
+          ORDER BY b.id",
     )
     .bind(tag)
     .fetch_all(&mut *conn)

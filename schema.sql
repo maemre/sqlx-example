@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS tag (
 );
 
 CREATE TABLE IF NOT EXISTS bookmark_tag (
-    bookmark_id INTEGER NOT NULL REFERENCES bookmark(id),
-    tag_id INTEGER NOT NULL REFERENCES tag(id),
-    PRIMARY KEY (bookmark_id, tag_id)
+    bookmark_id INTEGER NOT NULL,
+    tag_id INTEGER NOT NULL,
+    PRIMARY KEY (bookmark_id, tag_id),
+    FOREIGN KEY (bookmark_id) REFERENCES bookmark(id),
+    FOREIGN KEY (tag_id) REFERENCES tag(id)
 );
